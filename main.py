@@ -85,11 +85,11 @@ def extract_resume_info(file, content_type):
             response = retrieval_chain.run(query)
             # Convert responses into appropriate types
             if key == "years_of_experience":
-                # Use regex to extract the first number from the response
-                match = re.search(r"\d+(\.\d+)?", response)  # Matches integers or decimals
-                resume_info[key] = float(match.group()) if match else 0.0  # Default to 0.0 if no number found
+                # Extract all numbers and associated context (e.g., "3 years in X")
+                resume_info[key] = re.findall(r"\d+.*?years.*?(?:in [^.,]*)?", response, flags=re.IGNORECASE)
             elif key in ["techstack", "current_location", "certifications", "native_languages_known", "computer_languages_known"]:
-                resume_info[key] = response.split(", ")  # Split comma-separated lists
+                # Use regex to extract lists or clean strings
+                resume_info[key] = [item.strip() for item in re.split(r",|;", response) if item.strip()]
             else:
                 resume_info[key] = response.strip()  # Return a clean string
         except Exception as e:
