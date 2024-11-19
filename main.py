@@ -8,6 +8,7 @@ from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from docx import Document
 import os
+import re  # Import regular expressions for numeric extraction
 
 # Initialize FastAPI app
 app = FastAPI(title="Resume Extractor API", description="An API to extract resume information using LLMs.", version="1.1.0")
@@ -84,7 +85,9 @@ def extract_resume_info(file, content_type):
             response = retrieval_chain.run(query)
             # Convert responses into appropriate types
             if key == "years_of_experience":
-                resume_info[key] = float(response.split()[0])  # Extract numeric value
+                # Use regex to extract the first number from the response
+                match = re.search(r"\d+(\.\d+)?", response)  # Matches integers or decimals
+                resume_info[key] = float(match.group()) if match else 0.0  # Default to 0.0 if no number found
             elif key in ["techstack", "current_location", "certifications", "native_languages_known", "computer_languages_known"]:
                 resume_info[key] = response.split(", ")  # Split comma-separated lists
             else:
