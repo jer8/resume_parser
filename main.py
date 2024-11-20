@@ -126,4 +126,4 @@ def health_check():
     Health check for the API.
     """
     return {"status": "ok", "message": "Resume Extractor API is running!"}
-    ko
+    
