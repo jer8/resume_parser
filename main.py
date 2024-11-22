@@ -1,17 +1,34 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
-from langchain.chains import RetrievalQA
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores import FAISS
-from langchain.embeddings.huggingface import HuggingFaceEmbeddings
-from langchain_groq import ChatGroq
 from docx import Document
+import json
 import os
 import re  # Import regular expressions for numeric extraction
+from dotenv import load_dotenv
+import uvicorn
+from openai import OpenAI
+
+load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(title="Resume Extractor API", description="An API to extract resume information using LLMs.", version="1.1.0")
+
+PROMPT = """I want you to extract following information from a resume.
+Information required:
+1. relevant_title - What is the main job title or role of the person?
+2. years_of_experience - How many years of experience does this person have with different technologies or role, for example - [2 years experience in backend, 3 years of experience in frontend]?
+3. techstack - List the technologies, tools, and frameworks this person is proficient in.
+4. current_location - Where is the current location of the person?
+5. certifications - List all certifications the person has obtained.
+6. native_languages_known - What languages does this person speak natively?
+7. computer_languages_known - What programming or computer languages does this person know?
+
+Further instructions:
+ - All details should be from the resume provided, if something is not present give NA, don't assume anything.
+ - Output should always be in below specified json format.
+output - {{"relevant_title": value, "years_of_experience": [value], "techstack": [value], "current_location": value, "certifications": [value], "native_languages_known": [value], "computer_languages_known": [value]}}
+"""
 
 # Function to extract text from different file types
 def extract_text(file, content_type):
@@ -41,63 +58,22 @@ def extract_resume_info(file, content_type):
     # Step 1: Extract text from the file
     formatted_document = extract_text(file, content_type)
 
-    # Step 2: Split the document into chunks
-    text_splitter = CharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100  # Slight overlap for better context retention
+    # Step 2: Use OpenAI's API for information extraction
+    client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key="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"
     )
-    docs = text_splitter.create_documents(formatted_document)
-
-    # Step 3: Create embeddings and vectorstore
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    store = FAISS.from_documents(docs, embeddings)
-
-    # Step 4: Initialize the GroqChat model
-    llm = ChatGroq(
-        temperature=0.2,
+    completion = client.chat.completions.create(
         model="llama-3.1-70b-versatile",
-        api_key="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"  # API key remains unchanged
+        messages=[
+            {"role": "system", "content": PROMPT},
+            {"role": "user", "content": f"This is the resume - \n{formatted_document}"}
+        ],
+        response_format={"type": "json_object"}
     )
+    output = completion.choices[0].message.content
+    return json.loads(output)
 
-    # Step 5: Create the retrieval chain
-    retriever = store.as_retriever(search_kwargs={"k": 3})  # Retrieve top 3 matches for better context
-    retrieval_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=retriever
-    )
-
-    # Step 6: Define extraction queries
-    queries = {
-        "relevant_title": "What is the main job title or role of the person?",
-        "years_of_experience": "How many years of experience does this person have?",
-        "techstack": "List the technologies, tools, and frameworks this person is proficient in.",
-        "current_location": "Where is the current location of the person?",
-        "certifications": "List all certifications the person has obtained.",
-        "native_languages_known": "What languages does this person speak natively?",
-        "computer_languages_known": "What programming or computer languages does this person know?"
-    }
-
-    # Step 7: Extract information and format results
-    resume_info = {}
-    for key, query in queries.items():
-        try:
-            response = retrieval_chain.run(query)
-            # Convert responses into appropriate types
-            if key == "years_of_experience":
-                # Extract all numbers and associated context (e.g., "3 years in X")
-                resume_info[key] = re.findall(r"\d+.*?years.*?(?:in [^.,]*)?", response, flags=re.IGNORECASE)
-            elif key in ["techstack", "current_location", "certifications", "native_languages_known", "computer_languages_known"]:
-                # Use regex to extract lists or clean strings
-                resume_info[key] = [item.strip() for item in re.split(r",|;", response) if item.strip()]
-            else:
-                resume_info[key] = response.strip()  # Return a clean string
-        except Exception as e:
-            resume_info[key] = f"Error extracting data: {e}"
-
-    return resume_info
-
-# API endpoint
 @app.post("/extract")
 async def extract_resume(file: UploadFile = File(...)):
     """
@@ -126,4 +102,6 @@ def health_check():
     Health check for the API.
     """
     return {"status": "ok", "message": "Resume Extractor API is running!"}
-    
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=3000)
