@@ -2,9 +2,9 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
 from docx import Document
+import mysql.connector
 import json
 import os
-import re  # Import regular expressions for numeric extraction
 from dotenv import load_dotenv
 import uvicorn
 from openai import OpenAI
@@ -29,6 +29,19 @@ Further instructions:
  - Output should always be in below specified json format.
 output - {{"relevant_title": value, "years_of_experience": [value], "techstack": [value], "current_location": value, "certifications": [value], "native_languages_known": [value], "computer_languages_known": [value]}}
 """
+
+# Database connection function
+def get_db_connection():
+    try:
+        connection = mysql.connector.connect(
+            host="localhost",  # WampServer host
+            user="root",       # Your MySQL username
+            password="",       # Your MySQL password
+            database="ses"     # Database name
+        )
+        return connection
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
 
 # Function to extract text from different file types
 def extract_text(file, content_type):
@@ -74,10 +87,39 @@ def extract_resume_info(file, content_type):
     output = completion.choices[0].message.content
     return json.loads(output)
 
+def save_to_db(data):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+
+    try:
+        # Insert data into the table
+        query = """
+        INSERT INTO cv_info 
+        (relevant_title, years_of_experience, techstack, current_location, certifications, native_languages_known, computer_languages_known) 
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        values = (
+            data.get("relevant_title", "NA"),
+            json.dumps(data.get("years_of_experience", [])),  # Store lists as JSON
+            json.dumps(data.get("techstack", [])),  # Store lists as JSON
+            data.get("current_location", "NA"),
+            json.dumps(data.get("certifications", [])),  # Store lists as JSON
+            json.dumps(data.get("native_languages_known", [])),  # Store lists as JSON
+            json.dumps(data.get("computer_languages_known", []))  # Store lists as JSON
+        )
+        cursor.execute(query, values)
+        connection.commit()
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save data: {str(e)}")
+    finally:
+        cursor.close()
+        connection.close()
+
 @app.post("/extract")
 async def extract_resume(file: UploadFile = File(...)):
     """
-    Upload a resume (.pdf, .txt, .docx), and extract structured information such as job title, experience, tech stack, and more.
+    Upload a resume (.pdf, .txt, .docx), extract structured information, and store it in the database.
     """
     supported_types = [
         "application/pdf",
@@ -91,15 +133,18 @@ async def extract_resume(file: UploadFile = File(...)):
     try:
         # Extract resume information
         resume_info = extract_resume_info(file.file, file.content_type)
-        return JSONResponse(content=resume_info, status_code=200)
+
+        # Save extracted information to the database
+        save_to_db(resume_info)
+
+        return {"status": "success", "message": "Resume information extracted and saved successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing the file: {str(e)}")
 
-# Health check endpoint
 @app.get("/")
 def health_check():
     """
-    Health check for the API.
+    Health check endpoint.
     """
     return {"status": "ok", "message": "Resume Extractor API is running!"}
 
