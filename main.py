@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPExceptio
 from fastapi.responses import JSONResponse
 from PyPDF2 import PdfReader
 from docx import Document
